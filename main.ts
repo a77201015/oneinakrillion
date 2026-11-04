@@ -5,40 +5,59 @@ const MASTER_CODE = "RiddleA7c";
 const CUSTOM_PROMPT = "Same as last password but switch a for e";
 // =======================================================
 
-// Generate a brand new server key on every single deployment/restart.
-// This guarantees that any cookies issued BEFORE you changed the code 
-// become immediately invalid and unreadable by the server.
 const DEPLOYMENT_SECRET = crypto.randomUUID();
 
-// Memory tracking for rate-limiting (Survives page reloads)
 interface LockoutInfo {
   attempts: number;
   lockoutUntil: number;
 }
 const ipTracker = new Map<string, LockoutInfo>();
-
-// Memory tracking for sessions (Session token -> Expiry Timestamp)
-// This naturally wipes clean whenever Deno redeploys your code!
 const activeSessions = new Map<string, number>();
+
+// Reusable Professional Dark-Themed Page Wrapper
+function renderThemedPage(titleText: string, bodyContent: html) {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Proxy Authorization</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #121212; color: #fff; margin: 0; }
+        .card { background: #1e1e1e; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); text-align: center; max-width: 400px; width: 90%; }
+        h2 { margin-top: 0; margin-bottom: 20px; font-size: 1.2rem; color: #e0e0e0; line-height: 1.4; }
+        input[type="password"], input[type="text"] { width: 100%; padding: 12px; margin: 15px 0; border-radius: 6px; border: 1px solid #333; background: #2a2a2a; color: #fff; box-sizing: border-box; text-align: center; }
+        button { background: #00fa9a; color: #000; border: none; padding: 12px 24px; font-weight: bold; border-radius: 6px; cursor: pointer; width: 100%; font-size: 1rem; margin-top: 5px; }
+        button:hover { background: #00c87d; }
+        .error { color: #ff6b6b; font-weight: bold; margin-bottom: 15px; font-size: 1rem; line-height: 1.4; }
+        .info { color: #888; font-size: 0.9rem; margin-top: 15px; }
+        a { color: #00fa9a; text-decoration: none; font-weight: bold; }
+        a:hover { text-decoration: underline; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h2>${titleText}</h2>
+        ${bodyContent}
+      </div>
+    </body>
+    </html>
+  `;
+}
 
 Deno.serve(async (req: Request, info) => {
   const url = new URL(req.url);
   const clientIp = info.remoteAddr.hostname || "unknown-ip";
   const now = Date.now();
 
-  // Force absolute restriction to krillion.io
   const targetUrl = new URL(url.pathname + url.search, TARGET_SITE);
 
-  // Initialize or get rate-limiting status for this IP
   if (!ipTracker.has(clientIp)) {
     ipTracker.set(clientIp, { attempts: 0, lockoutUntil: 0 });
   }
   const status = ipTracker.get(clientIp)!;
 
-  // Read cookies to check session status
   const cookieHeader = req.headers.get("cookie") || "";
-  
-  // Look for a session cookie that matches our current deployment's secret format
   const cookieMatch = cookieHeader.match(new RegExp(`session_${DEPLOYMENT_SECRET}=([^;]+)`));
   const sessionToken = cookieMatch ? cookieMatch[1] : null;
   
@@ -48,39 +67,54 @@ Deno.serve(async (req: Request, info) => {
     if (now < expiry) {
       isAuthenticated = true;
     } else {
-      activeSessions.delete(sessionToken); // Clean up expired session
+      activeSessions.delete(sessionToken);
     }
   }
 
-  // Handle Login Submission
+  // Handle Login or Master Unlock Submissions
   if (req.method === "POST" && url.pathname === "/proxy-login") {
-    if (status.lockoutUntil > now) {
-      const minutesLeft = Math.ceil((status.lockoutUntil - now) / 60000);
-      return new Response(`Too many failed attempts. Try again in ${minutesLeft} minutes.`, { status: 429 });
-    }
-
     try {
       const formData = await req.formData();
       const enteredPassword = formData.get("password")?.toString();
 
-      // Master code execution
+      // Master code verification (Can be entered at normal screen or lockout screen)
       if (enteredPassword === MASTER_CODE) {
         status.attempts = 0;
         status.lockoutUntil = 0;
-        return new Response("Lockout timer reset. Please go back and try again.");
+        
+        const masterSuccessHtml = renderThemedPage("System Override", `
+          <div style="color: #00fa9a; font-weight: bold; margin-bottom: 20px;">Master Code Accepted</div>
+          <p class="info" style="color: #bbb; margin-bottom: 20px;">The security ban for your IP address has been successfully lifted.</p>
+          <a href="/"><button type="button">Return to Login</button></a>
+        `);
+        return new Response(masterSuccessHtml, { headers: { "Content-Type": "text/html" } });
       }
 
-      // Password Verification
+      // If user is locked out and didn't use the master code, block them
+      if (status.lockoutUntil > now) {
+        const minutesLeft = Math.ceil((status.lockoutUntil - now) / 60000);
+        const lockedHtml = renderThemedPage("Access Suspended", `
+          <div class="error">Security Lockout Active</div>
+          <p class="info" style="color: #bbb;">Too many failed attempts. Your access is restricted for another ${minutesLeft} minutes.</p>
+          <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
+          <p class="info">Administrator? Enter Master Code to override:</p>
+          <form action="/proxy-login" method="POST">
+            <input type="text" name="password" placeholder="Master Override Code" required autocomplete="off">
+            <button type="submit" style="background: #ff6b6b; color: #fff;">Execute Override</button>
+          </form>
+        `);
+        return new Response(lockedHtml, { status: 429, headers: { "Content-Type": "text/html" } });
+      }
+
+      // Standard Password Verification
       if (enteredPassword === CORRECT_PASSWORD) {
         status.attempts = 0;
         status.lockoutUntil = 0;
 
-        // Generate session properties
         const newSessionToken = crypto.randomUUID();
-        const sessionDurationMs = 20 * 60 * 1000; // 20 minutes
+        const sessionDurationMs = 20 * 60 * 1000; 
         activeSessions.set(newSessionToken, now + sessionDurationMs);
 
-        // Name the cookie using the unique deployment secret so old cookies are discarded
         return new Response(null, {
           status: 302,
           headers: {
@@ -89,58 +123,68 @@ Deno.serve(async (req: Request, info) => {
           },
         });
       } else {
+        // Failed attempt handling
         status.attempts += 1;
+        
         if (status.attempts >= 5) {
           status.lockoutUntil = now + (15 * 60 * 1000); // 15-minute ban
-          return new Response("Too many failed attempts. You are locked out for 15 minutes.", { status: 429 });
+          const justLockedHtml = renderThemedPage("Access Suspended", `
+            <div class="error">Maximum Attempts Exceeded</div>
+            <p class="info" style="color: #bbb;">You have been locked out for 15 minutes due to security protocols.</p>
+            <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
+            <p class="info">Administrator? Enter Master Code to override:</p>
+            <form action="/proxy-login" method="POST">
+              <input type="text" name="password" placeholder="Master Override Code" required autocomplete="off">
+              <button type="submit" style="background: #ff6b6b; color: #fff;">Execute Override</button>
+            </form>
+          `);
+          return new Response(justLockedHtml, { status: 429, headers: { "Content-Type": "text/html" } });
         }
-        return new Response(`Incorrect password. ${5 - status.attempts} attempts remaining. <a href="/">Try again</a>`, {
-          headers: { "Content-Type": "text/html" }
-        });
+
+        // Professional-themed incorrect password message
+        const attemptsLeft = 5 - status.attempts;
+        const failedHtml = renderThemedPage("Authorization Failed", `
+          <div class="error">Incorrect Password</div>
+          <p style="color: #bbb; margin-bottom: 20px;">The credentials provided do not match our configuration records.</p>
+          <div class="info" style="background: #2a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #5a2a2a; color: #ff8b8b; margin-bottom: 20px;">
+            ${attemptsLeft} authentication ${attemptsLeft === 1 ? 'attempt remains' : 'attempts remain'} before lockout.
+          </div>
+          <a href="/"><button type="button">Try Again</button></a>
+        `);
+        return new Response(failedHtml, { headers: { "Content-Type": "text/html" } });
       }
     } catch {
       return new Response("Bad Request", { status: 400 });
     }
   }
 
-  // If not logged in, render the custom password prompt screen
+  // Rendering for Default Unauthenticated Request
   if (!isAuthenticated) {
-    const isLockedOut = status.lockoutUntil > now;
-    const remainingTime = isLockedOut ? Math.ceil((status.lockoutUntil - now) / 60000) : 0;
+    if (status.lockoutUntil > now) {
+      const remainingTime = Math.ceil((status.lockoutUntil - now) / 60000);
+      const activeLockoutHtml = renderThemedPage("Access Suspended", `
+        <div class="error">Security Lockout Active</div>
+        <p class="info" style="color: #bbb;">Please wait ${remainingTime} minutes before trying again.</p>
+        <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
+        <p class="info">Administrator? Enter Master Code to override:</p>
+        <form action="/proxy-login" method="POST">
+          <input type="text" name="password" placeholder="Master Override Code" required autocomplete="off">
+          <button type="submit" style="background: #ff6b6b; color: #fff;">Execute Override</button>
+        </form>
+      `);
+      return new Response(activeLockoutHtml, { headers: { "Content-Type": "text/html" } });
+    }
 
-    const loginHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Proxy Authorization</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-          body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #121212; color: #fff; margin: 0; }
-          .card { background: #1e1e1e; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); text-align: center; max-width: 400px; width: 90%; }
-          h2 { margin-bottom: 20px; font-size: 1.2rem; color: #e0e0e0; }
-          input[type="password"] { width: 100%; padding: 12px; margin: 15px 0; border-radius: 6px; border: 1px solid #333; background: #2a2a2a; color: #fff; box-sizing: border-box; }
-          button { background: #00fa9a; color: #000; border: none; padding: 12px 24px; font-weight: bold; border-radius: 6px; cursor: pointer; width: 100%; }
-          button:hover { background: #00c87d; }
-          .error { color: #ff6b6b; font-weight: bold; margin-bottom: 10px; }
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <h2>${CUSTOM_PROMPT}</h2>
-          ${isLockedOut ? `<div class="error">Locked out! Try again in ${remainingTime} mins.</div>` : `
-            <form action="/proxy-login" method="POST">
-              <input type="password" name="password" placeholder="Enter password..." required autofocus>
-              <button type="submit">Unlock Game</button>
-            </form>
-          `}
-        </div>
-      </body>
-      </html>
-    `;
-    return new Response(loginHtml, { headers: { "Content-Type": "text/html" } });
+    const defaultLoginHtml = renderThemedPage(CUSTOM_PROMPT, `
+      <form action="/proxy-login" method="POST">
+        <input type="password" name="password" placeholder="Enter password..." required autofocus>
+        <button type="submit">Unlock Game</button>
+      </form>
+    `);
+    return new Response(defaultLoginHtml, { headers: { "Content-Type": "text/html" } });
   }
 
-  // Pass traffic safely to Krillion if authenticated
+  // Serve authorized stream directly
   try {
     const forwardHeaders = new Headers(req.headers);
     forwardHeaders.set("host", "krillion.io");
