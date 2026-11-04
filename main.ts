@@ -14,30 +14,114 @@ interface LockoutInfo {
 const ipTracker = new Map<string, LockoutInfo>();
 const activeSessions = new Map<string, number>();
 
-// Reusable Professional Dark-Themed Page Wrapper
-function renderThemedPage(titleText: string, bodyContent: html) {
+// Robust CSS targeting absolute viewport-centering
+function renderThemedPage(titleText: string, bodyContent: string) {
   return `
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
       <title>Proxy Authorization</title>
+      <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <style>
-        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #121212; color: #fff; margin: 0; }
-        .card { background: #1e1e1e; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); text-align: center; max-width: 400px; width: 90%; }
-        h2 { margin-top: 0; margin-bottom: 20px; font-size: 1.2rem; color: #e0e0e0; line-height: 1.4; }
-        input[type="password"], input[type="text"] { width: 100%; padding: 12px; margin: 15px 0; border-radius: 6px; border: 1px solid #333; background: #2a2a2a; color: #fff; box-sizing: border-box; text-align: center; }
-        button { background: #00fa9a; color: #000; border: none; padding: 12px 24px; font-weight: bold; border-radius: 6px; cursor: pointer; width: 100%; font-size: 1rem; margin-top: 5px; }
-        button:hover { background: #00c87d; }
-        .error { color: #ff6b6b; font-weight: bold; margin-bottom: 15px; font-size: 1rem; line-height: 1.4; }
-        .info { color: #888; font-size: 0.9rem; margin-top: 15px; }
-        a { color: #00fa9a; text-decoration: none; font-weight: bold; }
-        a:hover { text-decoration: underline; }
+        * { box-sizing: border-box; }
+        body { 
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+          display: flex; 
+          justify-content: center; 
+          align-items: center; 
+          min-height: 100vh; 
+          background: #121212; 
+          color: #ffffff; 
+          margin: 0; 
+          padding: 20px;
+        }
+        .card { 
+          background: #1e1e1e; 
+          padding: 40px 30px; 
+          border-radius: 16px; 
+          box-shadow: 0 8px 30px rgba(0,0,0,0.6); 
+          text-align: center; 
+          max-width: 420px; 
+          width: 100%;
+        }
+        h2 { 
+          margin-top: 0; 
+          margin-bottom: 24px; 
+          font-size: 1.3rem; 
+          color: #f0f0f0; 
+          line-height: 1.5; 
+          font-weight: 600;
+        }
+        input[type="password"], input[type="text"] { 
+          width: 100%; 
+          padding: 14px; 
+          margin: 10px 0 20px 0; 
+          border-radius: 8px; 
+          border: 1px solid #333; 
+          background: #2a2a2a; 
+          color: #fff; 
+          font-size: 1rem;
+          text-align: center; 
+          outline: none;
+          transition: border-color 0.2s;
+        }
+        input:focus {
+          border-color: #00fa9a;
+        }
+        button { 
+          background: #00fa9a; 
+          color: #000; 
+          border: none; 
+          padding: 14px 24px; 
+          font-weight: bold; 
+          border-radius: 8px; 
+          cursor: pointer; 
+          width: 100%; 
+          font-size: 1rem; 
+          transition: background 0.2s;
+        }
+        button:hover { 
+          background: #00c87d; 
+        }
+        .error-title { 
+          color: #ff6b6b; 
+          font-weight: bold; 
+          font-size: 1.2rem;
+          margin-bottom: 10px;
+        }
+        .info-text { 
+          color: #aaa; 
+          font-size: 0.95rem; 
+          line-height: 1.6;
+          margin-bottom: 20px;
+        }
+        .status-box { 
+          background: #2a1a1a; 
+          padding: 12px; 
+          border-radius: 8px; 
+          border: 1px solid #5a2a2a; 
+          color: #ff8b8b; 
+          font-size: 0.9rem;
+          margin-bottom: 24px; 
+        }
+        .divider {
+          border: 0; 
+          border-top: 1px solid #333; 
+          margin: 24px 0;
+        }
+        .admin-label {
+          color: #888;
+          font-size: 0.85rem;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          margin-bottom: 10px;
+          display: block;
+        }
       </style>
     </head>
     <body>
       <div class="card">
-        <h2>${titleText}</h2>
         ${bodyContent}
       </div>
     </body>
@@ -47,8 +131,14 @@ function renderThemedPage(titleText: string, bodyContent: html) {
 
 Deno.serve(async (req: Request, info) => {
   const url = new URL(req.url);
-  const clientIp = info.remoteAddr.hostname || "unknown-ip";
-  const now = Date.now();
+  
+  // Safe extraction of network address context for modern Deno environments
+  let clientIp = "unknown-ip";
+  try {
+    if (info?.remoteAddr && "hostname" in info.remoteAddr) {
+      clientIp = info.remoteAddr.hostname;
+    }
+  } catch (_) { /* fallback to default */ }
 
   const targetUrl = new URL(url.pathname + url.search, TARGET_SITE);
 
@@ -64,56 +154,54 @@ Deno.serve(async (req: Request, info) => {
   let isAuthenticated = false;
   if (sessionToken && activeSessions.has(sessionToken)) {
     const expiry = activeSessions.get(sessionToken)!;
-    if (now < expiry) {
+    if (Date.now() < expiry) {
       isAuthenticated = true;
     } else {
       activeSessions.delete(sessionToken);
     }
   }
 
-  // Handle Login or Master Unlock Submissions
+  // Handle Input Submissions
   if (req.method === "POST" && url.pathname === "/proxy-login") {
     try {
       const formData = await req.formData();
       const enteredPassword = formData.get("password")?.toString();
 
-      // Master code verification (Can be entered at normal screen or lockout screen)
+      // 1. Immediate evaluation for Master Code (Bypasses active lockouts)
       if (enteredPassword === MASTER_CODE) {
         status.attempts = 0;
         status.lockoutUntil = 0;
         
-        const masterSuccessHtml = renderThemedPage("System Override", `
-          <div style="color: #00fa9a; font-weight: bold; margin-bottom: 20px;">Master Code Accepted</div>
-          <p class="info" style="color: #bbb; margin-bottom: 20px;">The security ban for your IP address has been successfully lifted.</p>
-          <a href="/"><button type="button">Return to Login</button></a>
-        `);
-        return new Response(masterSuccessHtml, { headers: { "Content-Type": "text/html" } });
+        return new Response(renderThemedPage("System Override", `
+          <div style="color: #00fa9a; font-weight: bold; font-size: 1.2rem; margin-bottom: 10px;">Bypass Successful</div>
+          <p class="info-text">The network ban for IP context <b>${clientIp}</b> has been lifted.</p>
+          <button onclick="window.location.href='/'" style="margin-top: 10px;">Return to Login</button>
+        `), { headers: { "Content-Type": "text/html" } });
       }
 
-      // If user is locked out and didn't use the master code, block them
-      if (status.lockoutUntil > now) {
-        const minutesLeft = Math.ceil((status.lockoutUntil - now) / 60000);
-        const lockedHtml = renderThemedPage("Access Suspended", `
-          <div class="error">Security Lockout Active</div>
-          <p class="info" style="color: #bbb;">Too many failed attempts. Your access is restricted for another ${minutesLeft} minutes.</p>
-          <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
-          <p class="info">Administrator? Enter Master Code to override:</p>
+      // 2. Enforce hard-stop block if locked out and master key wasn't supplied
+      if (status.lockoutUntil > Date.now()) {
+        const minutesLeft = Math.ceil((status.lockoutUntil - Date.now()) / 60000);
+        return new Response(renderThemedPage("Access Denied", `
+          <div class="error-title">Security Lockout Active</div>
+          <p class="info-text">Too many bad attempts. Access is restricted for ${minutesLeft} more minutes.</p>
+          <div class="divider"></div>
+          <span class="admin-label">System Administrator Override</span>
           <form action="/proxy-login" method="POST">
-            <input type="text" name="password" placeholder="Master Override Code" required autocomplete="off">
-            <button type="submit" style="background: #ff6b6b; color: #fff;">Execute Override</button>
+            <input type="text" name="password" placeholder="Enter Master Override Code" required autocomplete="off">
+            <button type="submit" style="background: #ff6b6b; color: #fff;">Clear Lockout</button>
           </form>
-        `);
-        return new Response(lockedHtml, { status: 429, headers: { "Content-Type": "text/html" } });
+        `), { status: 429, headers: { "Content-Type": "text/html" } });
       }
 
-      // Standard Password Verification
+      // 3. Evaluate Standard Password
       if (enteredPassword === CORRECT_PASSWORD) {
         status.attempts = 0;
         status.lockoutUntil = 0;
 
         const newSessionToken = crypto.randomUUID();
         const sessionDurationMs = 20 * 60 * 1000; 
-        activeSessions.set(newSessionToken, now + sessionDurationMs);
+        activeSessions.set(newSessionToken, Date.now() + sessionDurationMs);
 
         return new Response(null, {
           status: 302,
@@ -123,81 +211,64 @@ Deno.serve(async (req: Request, info) => {
           },
         });
       } else {
-        // Failed attempt handling
+        // Bad password logic
         status.attempts += 1;
         
         if (status.attempts >= 5) {
-          status.lockoutUntil = now + (15 * 60 * 1000); // 15-minute ban
-          const justLockedHtml = renderThemedPage("Access Suspended", `
-            <div class="error">Maximum Attempts Exceeded</div>
-            <p class="info" style="color: #bbb;">You have been locked out for 15 minutes due to security protocols.</p>
-            <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
-            <p class="info">Administrator? Enter Master Code to override:</p>
+          status.lockoutUntil = Date.now() + (15 * 60 * 1000);
+          return new Response(renderThemedPage("Access Suspended", `
+            <div class="error-title">Maximum Attempts Exceeded</div>
+            <p class="info-text">Your connection has been temporarily rate-limited for 15 minutes.</p>
+            <div class="divider"></div>
+            <span class="admin-label">System Administrator Override</span>
             <form action="/proxy-login" method="POST">
-              <input type="text" name="password" placeholder="Master Override Code" required autocomplete="off">
-              <button type="submit" style="background: #ff6b6b; color: #fff;">Execute Override</button>
+              <input type="text" name="password" placeholder="Enter Master Override Code" required autocomplete="off">
+              <button type="submit" style="background: #ff6b6b; color: #fff;">Clear Lockout</button>
             </form>
-          `);
-          return new Response(justLockedHtml, { status: 429, headers: { "Content-Type": "text/html" } });
+          `), { status: 429, headers: { "Content-Type": "text/html" } });
         }
 
-        // Professional-themed incorrect password message
         const attemptsLeft = 5 - status.attempts;
-        const failedHtml = renderThemedPage("Authorization Failed", `
-          <div class="error">Incorrect Password</div>
-          <p style="color: #bbb; margin-bottom: 20px;">The credentials provided do not match our configuration records.</p>
-          <div class="info" style="background: #2a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #5a2a2a; color: #ff8b8b; margin-bottom: 20px;">
-            ${attemptsLeft} authentication ${attemptsLeft === 1 ? 'attempt remains' : 'attempts remain'} before lockout.
+        return new Response(renderThemedPage("Authentication Failed", `
+          <div class="error-title">Invalid Credentials</div>
+          <p class="info-text">The key phrase entered is incorrect.</p>
+          <div class="status-box">
+            ${attemptsLeft} ${attemptsLeft === 1 ? 'attempt remains' : 'attempts remain'} before system lockout.
           </div>
-          <a href="/"><button type="button">Try Again</button></a>
-        `);
-        return new Response(failedHtml, { headers: { "Content-Type": "text/html" } });
+          <button onclick="window.location.href='/'">Try Again</button>
+        `), { headers: { "Content-Type": "text/html" } });
       }
     } catch {
       return new Response("Bad Request", { status: 400 });
     }
   }
 
-  // Rendering for Default Unauthenticated Request
+  // Gateway check for unauthenticated routes
   if (!isAuthenticated) {
-    if (status.lockoutUntil > now) {
-      const remainingTime = Math.ceil((status.lockoutUntil - now) / 60000);
-      const activeLockoutHtml = renderThemedPage("Access Suspended", `
-        <div class="error">Security Lockout Active</div>
-        <p class="info" style="color: #bbb;">Please wait ${remainingTime} minutes before trying again.</p>
-        <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
-        <p class="info">Administrator? Enter Master Code to override:</p>
+    if (status.lockoutUntil > Date.now()) {
+      const remainingTime = Math.ceil((status.lockoutUntil - Date.now()) / 60000);
+      return new Response(renderThemedPage("Access Suspended", `
+        <div class="error-title">Security Lockout Active</div>
+        <p class="info-text">Please wait ${remainingTime} minutes before attempting authentication.</p>
+        <div class="divider"></div>
+        <span class="admin-label">System Administrator Override</span>
         <form action="/proxy-login" method="POST">
-          <input type="text" name="password" placeholder="Master Override Code" required autocomplete="off">
-          <button type="submit" style="background: #ff6b6b; color: #fff;">Execute Override</button>
+          <input type="text" name="password" placeholder="Enter Master Override Code" required autocomplete="off">
+          <button type="submit" style="background: #ff6b6b; color: #fff;">Clear Lockout</button>
         </form>
-      `);
-      return new Response(activeLockoutHtml, { headers: { "Content-Type": "text/html" } });
+      `), { headers: { "Content-Type": "text/html" } });
     }
 
-    const defaultLoginHtml = renderThemedPage(CUSTOM_PROMPT, `
+    return new Response(renderThemedPage("Gateway Authentication", `
+      <h2>${CUSTOM_PROMPT}</h2>
       <form action="/proxy-login" method="POST">
         <input type="password" name="password" placeholder="Enter password..." required autofocus>
         <button type="submit">Unlock Game</button>
       </form>
-    `);
-    return new Response(defaultLoginHtml, { headers: { "Content-Type": "text/html" } });
+    `), { headers: { "Content-Type": "text/html" } });
   }
 
-  // Serve authorized stream directly
+  // Safe reverse proxy pipes directly to Krillion assets
   try {
     const forwardHeaders = new Headers(req.headers);
     forwardHeaders.set("host", "krillion.io");
-
-    const response = await fetch(targetUrl.href, {
-      method: req.method,
-      headers: forwardHeaders,
-      body: req.body,
-      redirect: "manual"
-    });
-
-    return response;
-  } catch (err) {
-    return new Response(`Proxy Error: ${err.message}`, { status: 500 });
-  }
-});
