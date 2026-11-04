@@ -5,6 +5,11 @@ const MASTER_CODE = "RiddleA7c";
 const CUSTOM_PROMPT = "Same as last password but switch a for e";
 // =======================================================
 
+// Generate a brand new server key on every single deployment/restart.
+// This guarantees that any cookies issued BEFORE you changed the code 
+// become immediately invalid and unreadable by the server.
+const DEPLOYMENT_SECRET = crypto.randomUUID();
+
 // Memory tracking for rate-limiting (Survives page reloads)
 interface LockoutInfo {
   attempts: number;
@@ -13,6 +18,7 @@ interface LockoutInfo {
 const ipTracker = new Map<string, LockoutInfo>();
 
 // Memory tracking for sessions (Session token -> Expiry Timestamp)
+// This naturally wipes clean whenever Deno redeploys your code!
 const activeSessions = new Map<string, number>();
 
 Deno.serve(async (req: Request, info) => {
@@ -20,7 +26,7 @@ Deno.serve(async (req: Request, info) => {
   const clientIp = info.remoteAddr.hostname || "unknown-ip";
   const now = Date.now();
 
-  // 1. Force absolute restriction to krillion.io
+  // Force absolute restriction to krillion.io
   const targetUrl = new URL(url.pathname + url.search, TARGET_SITE);
 
   // Initialize or get rate-limiting status for this IP
@@ -31,7 +37,10 @@ Deno.serve(async (req: Request, info) => {
 
   // Read cookies to check session status
   const cookieHeader = req.headers.get("cookie") || "";
-  const sessionToken = cookieHeader.match(/session_id=([^;]+)/)?.[1];
+  
+  // Look for a session cookie that matches our current deployment's secret format
+  const cookieMatch = cookieHeader.match(new RegExp(`session_${DEPLOYMENT_SECRET}=([^;]+)`));
+  const sessionToken = cookieMatch ? cookieMatch[1] : null;
   
   let isAuthenticated = false;
   if (sessionToken && activeSessions.has(sessionToken)) {
@@ -43,9 +52,8 @@ Deno.serve(async (req: Request, info) => {
     }
   }
 
-  // 2. Handle Login Submission
+  // Handle Login Submission
   if (req.method === "POST" && url.pathname === "/proxy-login") {
-    // Check if user is currently locked out
     if (status.lockoutUntil > now) {
       const minutesLeft = Math.ceil((status.lockoutUntil - now) / 60000);
       return new Response(`Too many failed attempts. Try again in ${minutesLeft} minutes.`, { status: 429 });
@@ -64,7 +72,6 @@ Deno.serve(async (req: Request, info) => {
 
       // Password Verification
       if (enteredPassword === CORRECT_PASSWORD) {
-        // Reset rate-limiting counts upon success
         status.attempts = 0;
         status.lockoutUntil = 0;
 
@@ -73,17 +80,15 @@ Deno.serve(async (req: Request, info) => {
         const sessionDurationMs = 20 * 60 * 1000; // 20 minutes
         activeSessions.set(newSessionToken, now + sessionDurationMs);
 
-        // Serve a cookie. Crucially, leaving out 'Max-Age' or 'Expires' 
-        // turns it into a "Session Cookie" which deletes itself when the tab/browser closes.
+        // Name the cookie using the unique deployment secret so old cookies are discarded
         return new Response(null, {
           status: 302,
           headers: {
             "Location": "/",
-            "Set-Cookie": `session_id=${newSessionToken}; Path=/; HttpOnly; SameSite=Strict`,
+            "Set-Cookie": `session_${DEPLOYMENT_SECRET}=${newSessionToken}; Path=/; HttpOnly; SameSite=Strict`,
           },
         });
       } else {
-        // Failed attempt handling
         status.attempts += 1;
         if (status.attempts >= 5) {
           status.lockoutUntil = now + (15 * 60 * 1000); // 15-minute ban
@@ -98,7 +103,7 @@ Deno.serve(async (req: Request, info) => {
     }
   }
 
-  // 3. If not logged in, render the custom password prompt screen
+  // If not logged in, render the custom password prompt screen
   if (!isAuthenticated) {
     const isLockedOut = status.lockoutUntil > now;
     const remainingTime = isLockedOut ? Math.ceil((status.lockoutUntil - now) / 60000) : 0;
@@ -135,7 +140,7 @@ Deno.serve(async (req: Request, info) => {
     return new Response(loginHtml, { headers: { "Content-Type": "text/html" } });
   }
 
-  // 4. Pass traffic safely to Krillion if authenticated
+  // Pass traffic safely to Krillion if authenticated
   try {
     const forwardHeaders = new Headers(req.headers);
     forwardHeaders.set("host", "krillion.io");
@@ -144,7 +149,7 @@ Deno.serve(async (req: Request, info) => {
       method: req.method,
       headers: forwardHeaders,
       body: req.body,
-      redirect: "manual" // Handle redirects natively via proxy
+      redirect: "manual"
     });
 
     return response;
