@@ -8,7 +8,7 @@ const PASSWORD = env('PROXY_PASSWORD') || `Iskender`;
 // The one site this proxy opens. There is no way to change it from the browser.
 const SITE = env('PROXY_SITE') || 'https://krillion.io';
 // The sign-in page shows this question; the password above is the answer to it.
-const QUESTION = env('PROXY_QUESTION') || `Same as previous but replace a with e`;
+const QUESTION = env('PROXY_QUESTION') || `DO NOT LEAVE THIS TAB OPEN IF UNUSED. Same as previous but replace a with e`;
 // Optional master code. Typing it at the sign-in page signs you in even during a lockout, and clears the lockout.
 // Use something long and private. Leave it empty (two backticks with nothing between) to turn it off.
 const MASTER_CODE = env('PROXY_MASTER_CODE') ?? `RiddleA7c`;
