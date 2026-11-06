@@ -1,17 +1,17 @@
-// Web proxy locked to one site, for Deno Deploy. Save this file as main.js in your GitHub repository.
+// Web proxy locked to one site, for Vercel. Save this file as api/index.js in your GitHub repository.
 // KEEP THE REPOSITORY PRIVATE: this file contains your password and master code.
 // Keep the backtick quotes on the text settings, so they can contain ' and ". Don't use a backtick or ${ inside them.
 // Optional: instead of editing the lines below, you can set PROXY_PASSWORD, PROXY_QUESTION, PROXY_MASTER_CODE and PROXY_SITE
-// as environment variables in Deno Deploy's app settings. When they are set, they replace the values here.
-const env = (k) => { try { return Deno.env.get(k); } catch { return undefined; } };
+// as environment variables in your Vercel project's settings. When they are set, they replace the values here.
+const env = (k) => process.env[k];
 const PASSWORD = env('PROXY_PASSWORD') || `Iskender`;
 // The one site this proxy opens. There is no way to change it from the browser.
 const SITE = env('PROXY_SITE') || 'https://krillion.io';
 // The sign-in page shows this question; the password above is the answer to it.
-const QUESTION = env('PROXY_QUESTION') || `DO NOT LEAVE THIS TAB OPEN IF UNUSED. Same as previous but replace a with e`;
+const QUESTION = env('PROXY_QUESTION') || `Same as previous but replace a with e`;
 // Optional master code. Typing it at the sign-in page signs you in even during a lockout, and clears the lockout.
 // Use something long and private. Leave it empty (two backticks with nothing between) to turn it off.
-const MASTER_CODE = env('PROXY_MASTER_CODE') ?? `RiddleA7c`;
+const MASTER_CODE = env('PROXY_MASTER_CODE') ?? `mastercode`;
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const shell = (title, body) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -37,24 +37,20 @@ const html = (body, status = 200, extra = {}) => new Response(body, { status, he
 const redirect = (location, status = 302, extra = {}) => new Response(null, { status, headers: mk({ location, 'cache-control': 'no-store', ...extra }) });
 
 // Wrong-answer lockout: after MAX_TRIES wrong answers in a row, sign-in is refused for LOCK_SECONDS, even for the right answer
-// (only the master code gets in). It is remembered in two places: per visitor address (Deno KV if you connect one in Deno Deploy,
-// otherwise this program's memory) and in a signed cookie in the browser, so re-entering the address can't skip it.
+// (only the master code gets in). It is remembered in two places: per visitor address (this function's memory, which Vercel may reset at any time) and in a signed cookie in the browser, so re-entering the address can't skip it.
 const MAX_TRIES = 5;
 const LOCK_SECONDS = 15 * 60;
 const ZERO = { n: 0, m: 0, until: 0, exp: 0 };
-let kv = null;
-try { if (typeof Deno !== 'undefined' && Deno.openKv) kv = await Deno.openKv(); } catch {}
 const memory = new Map();
 const getTries = async (ip) => {
-  const v = kv ? (await kv.get(['t', ip])).value : memory.get(ip);
+  const v = memory.get(ip);
   return v && v.exp > Date.now() ? v : ZERO;
 };
 const setTries = async (ip, v) => {
-  if (kv) return kv.set(['t', ip], v, { expireIn: LOCK_SECONDS * 1000 });
   if (memory.size > 500) for (const [k, x] of memory) if (x.exp < Date.now()) memory.delete(k);
   memory.set(ip, v);
 };
-const clearTries = async (ip) => (kv ? kv.delete(['t', ip]) : memory.delete(ip));
+const clearTries = async (ip) => memory.delete(ip);
 const failCookie = async (st) => {
   const body = [st.n, st.m, st.until, st.exp].join('.');
   return `__f=${body}.${await sign('f' + body)}${COOKIE}; Max-Age=${LOCK_SECONDS}`;
@@ -73,11 +69,11 @@ const loadState = async (ip, cookie) => {
 };
 const pausedNote = (ms) => `Too many wrong answers. Sign-in is paused for about ${Math.ceil(ms / 60000)} minute${Math.ceil(ms / 60000) === 1 ? '' : 's'}.`;
 const pausedPage = (next, ms, cookie) => html(login(next, pausedNote(ms)), 429, { 'retry-after': String(Math.ceil(ms / 1000)), 'set-cookie': cookie });
-// The visitor's address. Behind a host's front door, the last forwarded address is the one the host itself added.
-const ipOf = (request, fallback) => {
+// The visitor's address. Vercel sets x-vercel-forwarded-for itself, so a visitor can't fake it.
+const ipOf = (request) => {
   const h = request.headers;
   const xff = (h.get('x-forwarded-for') || '').split(',').map((x) => x.trim()).filter(Boolean);
-  return h.get('fly-client-ip') || xff[xff.length - 1] || fallback || 'unknown';
+  return h.get('x-vercel-forwarded-for') || h.get('x-real-ip') || xff[xff.length - 1] || 'unknown';
 };
 
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -202,14 +198,14 @@ function rewriteHtml(text, base, T) {
   return d ? d[0] + inject + out.slice(d[0].length) : inject + out;
 }
 
-async function handler(request, fallbackIp) {
+async function handler(request) {
   const u = new URL(request.url);
   if (PASSWORD === 'change-me') {
     return html(shell('Set a password', '<h1>Set a password first</h1><p>Edit the PASSWORD line at the top of the code, then deploy again.</p>'), 500);
   }
 
   const cookies = parseCookies(request.headers.get('cookie') || '');
-  const ip = ipOf(request, fallbackIp);
+  const ip = ipOf(request);
 
   if (u.pathname === '/__login' && request.method === 'POST') {
     const now = Date.now();
@@ -323,5 +319,5 @@ async function handler(request, fallbackIp) {
   return new Response(up.body, { status: up.status, headers: out });
 }
 
-// Start the server. Deno Deploy runs this for you. To try it on your own computer: deno run -A main.js
-Deno.serve((request, info) => handler(request, info?.remoteAddr?.hostname));
+// Vercel runs this function for every request (vercel.json sends all addresses to it).
+export default { fetch: (request) => handler(request) };
